@@ -1,0 +1,21 @@
+[project]
+name = "bird-watcher"
+version = "0.1.0"
+description = "BirdWatcher — realtime BirdNET recorder + dashboard"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "birdnet-analyzer",
+  "birdnetlib",
+  "flask",
+  "flask-cors",
+  "librosa",
+  "numpy",
+  "scipy",
+  "sounddevice",
+  "soundfile",
+  "webrtcvad-wheels",
+]
+
+[tool.uv]
+package = false

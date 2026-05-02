@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BirdWatcher</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Source+Serif+4:ital,wght@0,300;0,400;1,300&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --ink:       #1a1a14;
+    --ink2:      #4a4a3a;
+    --ink3:      #7a7a6a;
+    --paper:     #f5f0e8;
+    --paper2:    #ede8dc;
+    --paper3:    #e4ddd0;
+    --sage:      #5a7a5a;
+    --sage2:     #3d5c3d;
+    --amber:     #b8860b;
+    --amber2:    #8b6508;
+    --rust:      #8b3a2a;
+    --border:    rgba(90,80,60,0.18);
+    --border2:   rgba(90,80,60,0.32);
+    --mono:      'IBM Plex Mono', monospace;
+    --serif:     'Source Serif 4', serif;
+    --display:   'Playfair Display', serif;
+  }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--serif);
+    font-size: 15px;
+    line-height: 1.6;
+    min-height: 100vh;
+  }
+
+  /* Subtle ruled-paper lines */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: repeating-linear-gradient(
+      transparent,
+      transparent 27px,
+      rgba(90,80,60,0.06) 27px,
+      rgba(90,80,60,0.06) 28px
+    );
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .app { position: relative; z-index: 1; max-width: 1100px; margin: 0 auto; padding: 0 24px 60px; }
+
+  /* ── Header ── */
+  header {
+    border-bottom: 1.5px solid var(--border2);
+    padding: 32px 0 20px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+
+  .header-left h1 {
+    font-family: var(--display);
+    font-size: 36px;
+    font-weight: 600;
+    letter-spacing: -0.5px;
+    color: var(--ink);
+    line-height: 1.1;
+  }
+  .header-left h1 span { color: var(--sage2); }
+  .header-left .subtitle {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink3);
+    margin-top: 4px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--sage);
+    animation: pulse 2s ease-in-out infinite;
+  }
+  .status-dot.offline { background: var(--ink3); animation: none; }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+  .status-text {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink3);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  /* ── Stats bar ── */
+  .stats-bar {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    margin: 24px 0;
+  }
+  .stat-cell {
+    background: var(--paper);
+    padding: 18px 20px;
+    text-align: center;
+  }
+  .stat-num {
+    font-family: var(--display);
+    font-size: 32px;
+    font-weight: 500;
+    color: var(--sage2);
+    line-height: 1;
+  }
+  .stat-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--ink3);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-top: 4px;
+  }
+
+  /* ── Two-column layout ── */
+  .main-grid {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: 24px;
+    align-items: start;
+  }
+
+  /* ── Sidebar ── */
+  .sidebar-section {
+    border: 1px solid var(--border);
+    background: var(--paper2);
+  }
+  .section-head {
+    font-family: var(--mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--ink3);
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    background: var(--paper3);
+  }
+
+  .species-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .species-item:last-child { border-bottom: none; }
+  .species-item:hover { background: var(--paper3); }
+  .species-item.active { background: var(--paper3); border-left: 3px solid var(--sage2); }
+
+  .species-name {
+    font-size: 13px;
+    color: var(--ink);
+    font-weight: 400;
+  }
+  .species-count {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--sage2);
+    background: rgba(90,122,90,0.12);
+    padding: 1px 7px;
+    border-radius: 10px;
+  }
+
+  /* ── Main content ── */
+  .content-section {
+    border: 1px solid var(--border);
+    background: var(--paper);
+  }
+
+  .content-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    background: var(--paper3);
+    flex-wrap: wrap;
+  }
+
+  .search-input {
+    flex: 1;
+    min-width: 140px;
+    font-family: var(--mono);
+    font-size: 12px;
+    background: var(--paper);
+    border: 1px solid var(--border2);
+    color: var(--ink);
+    padding: 5px 10px;
+    outline: none;
+  }
+  .search-input:focus { border-color: var(--sage); }
+  .search-input::placeholder { color: var(--ink3); }
+
+  .toolbar-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--ink3);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+  }
+
+  /* ── Detection rows ── */
+  .detection-list { }
+
+  .detection-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 12px;
+    align-items: center;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.15s;
+  }
+  .detection-row:last-child { border-bottom: none; }
+  .detection-row:hover { background: rgba(90,80,60,0.04); }
+
+  .det-name {
+    font-family: var(--display);
+    font-size: 17px;
+    font-weight: 500;
+    color: var(--ink);
+    line-height: 1.2;
+  }
+  .det-sci {
+    font-size: 12px;
+    font-style: italic;
+    color: var(--ink3);
+    margin-top: 1px;
+  }
+  .det-meta {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--ink3);
+    margin-top: 4px;
+  }
+
+  .confidence-bar-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 3px;
+    min-width: 70px;
+  }
+  .confidence-pct {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--sage2);
+  }
+  .confidence-bar {
+    width: 70px;
+    height: 3px;
+    background: var(--paper3);
+    position: relative;
+    overflow: hidden;
+  }
+  .confidence-bar-fill {
+    position: absolute;
+    top: 0; left: 0;
+    height: 100%;
+    background: var(--sage);
+    transition: width 0.4s ease;
+  }
+  .confidence-bar-fill.high  { background: var(--sage2); }
+  .confidence-bar-fill.med   { background: var(--amber); }
+  .confidence-bar-fill.low   { background: var(--ink3); }
+
+  .det-actions { display: flex; gap: 6px; align-items: center; }
+
+  .play-btn {
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    border: 1px solid var(--border2);
+    background: var(--paper2);
+    color: var(--sage2);
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .play-btn:hover { background: var(--sage2); color: white; border-color: var(--sage2); }
+  .play-btn.playing { background: var(--sage2); color: white; border-color: var(--sage2); }
+  .play-btn.no-audio { opacity: 0.3; cursor: default; }
+
+  .delete-btn {
+    width: 24px; height: 24px;
+    border: none;
+    background: transparent;
+    color: var(--ink3);
+    cursor: pointer;
+    font-size: 14px;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0.5;
+    transition: opacity 0.15s, color 0.15s;
+  }
+  .delete-btn:hover { opacity: 1; color: var(--rust); }
+
+  /* ── Audio player strip ── */
+  .audio-strip {
+    display: none;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    background: var(--paper3);
+    border-top: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink2);
+  }
+  .audio-strip.visible { display: flex; }
+  .audio-strip audio { flex: 1; height: 28px; accent-color: var(--sage2); }
+
+  .audio-strip-name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 160px;
+    font-style: italic;
+  }
+
+  /* ── Empty / loading states ── */
+  .empty-state {
+    padding: 60px 20px;
+    text-align: center;
+    color: var(--ink3);
+    font-style: italic;
+  }
+  .empty-state .big { font-family: var(--display); font-size: 22px; color: var(--ink2); margin-bottom: 8px; }
+
+  /* ── Load more ── */
+  .load-more-row {
+    padding: 14px;
+    text-align: center;
+    border-top: 1px solid var(--border);
+  }
+  .load-more-btn {
+    font-family: var(--mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    background: none;
+    border: 1px solid var(--border2);
+    color: var(--ink2);
+    padding: 6px 18px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .load-more-btn:hover { background: var(--paper3); }
+
+  /* ── Responsive ── */
+  @media (max-width: 700px) {
+    .main-grid { grid-template-columns: 1fr; }
+    .stats-bar { grid-template-columns: repeat(3,1fr); }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header>
+    <div class="header-left">
+      <h1>Bird<span>Watcher</span></h1>
+      <div class="subtitle">Local acoustic monitor · BirdNET-Analyzer</div>
+    </div>
+    <div class="header-right">
+      <div class="status-dot" id="statusDot"></div>
+      <div class="status-text" id="statusText">Connecting…</div>
+    </div>
+  </header>
+
+  <!-- Stats bar -->
+  <div class="stats-bar">
+    <div class="stat-cell">
+      <div class="stat-num" id="statTotal">—</div>
+      <div class="stat-label">Total detections</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-num" id="statSpecies">—</div>
+      <div class="stat-label">Unique species</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-num" id="statToday">—</div>
+      <div class="stat-label">Today</div>
+    </div>
+  </div>
+
+  <div class="main-grid">
+
+    <!-- Sidebar: top species -->
+    <div>
+      <div class="sidebar-section">
+        <div class="section-head">Most seen species</div>
+        <div id="speciesList">
+          <div class="empty-state" style="padding:24px">Loading…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main: detections log -->
+    <div>
+      <div class="content-section">
+        <div class="content-toolbar">
+          <input class="search-input" type="text" id="searchInput" placeholder="Filter by bird name…">
+          <span class="toolbar-label" id="countLabel"></span>
+        </div>
+
+        <!-- Playback strip (pinned to top of list) -->
+        <div class="audio-strip" id="audioStrip">
+          <span class="audio-strip-name" id="audioStripName">—</span>
+          <audio id="audioPlayer" controls></audio>
+        </div>
+
+        <div id="detectionList">
+          <div class="empty-state">
+            <div class="big">Listening for birds…</div>
+            No detections yet. Make sure the recorder is running.
+          </div>
+        </div>
+
+        <div id="loadMoreRow" class="load-more-row" style="display:none">
+          <button class="load-more-btn" id="loadMoreBtn">Load more</button>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const LIMIT = 40;
+let offset = 0;
+let totalDetections = 0;
+let currentSearch = '';
+let activeSpeciesFilter = '';
+let currentPlayId = null;
+
+const audioPlayer = document.getElementById('audioPlayer');
+const audioStrip  = document.getElementById('audioStrip');
+const audioStripName = document.getElementById('audioStripName');
+
+// ── Fetch stats ───────────────────────────────────────────────────────────────
+async function fetchStats() {
+  try {
+    const res = await fetch('/api/stats');
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+
+    document.getElementById('statTotal').textContent   = data.total_detections.toLocaleString();
+    document.getElementById('statSpecies').textContent = data.unique_species.toLocaleString();
+    document.getElementById('statToday').textContent   = data.today_detections.toLocaleString();
+
+    renderSpeciesList(data.top_species);
+    document.getElementById('statusDot').classList.remove('offline');
+    document.getElementById('statusText').textContent = 'Live';
+  } catch {
+    document.getElementById('statusDot').classList.add('offline');
+    document.getElementById('statusText').textContent = 'Offline';
+  }
+}
+
+// ── Species sidebar ───────────────────────────────────────────────────────────
+function renderSpeciesList(species) {
+  const el = document.getElementById('speciesList');
+  if (!species.length) {
+    el.innerHTML = '<div class="empty-state" style="padding:20px;font-size:13px">No detections yet</div>';
+    return;
+  }
+  el.innerHTML = species.map(s => `
+    <div class="species-item ${activeSpeciesFilter === s.common_name ? 'active' : ''}"
+         onclick="filterBySpecies('${s.common_name.replace(/'/g,"\\'")}')">
+      <span class="species-name">${s.common_name}</span>
+      <span class="species-count">${s.cnt}</span>
+    </div>
+  `).join('');
+}
+
+function filterBySpecies(name) {
+  if (activeSpeciesFilter === name) {
+    activeSpeciesFilter = '';
+    currentSearch = '';
+    document.getElementById('searchInput').value = '';
+  } else {
+    activeSpeciesFilter = name;
+    currentSearch = name;
+    document.getElementById('searchInput').value = name;
+  }
+  resetAndFetch();
+}
+
+// ── Detections list ───────────────────────────────────────────────────────────
+async function fetchDetections(append = false) {
+  const params = new URLSearchParams({ limit: LIMIT, offset });
+  if (currentSearch) params.set('q', currentSearch);
+
+  const res = await fetch(`/api/detections?${params}`);
+  const data = await res.json();
+
+  totalDetections = data.total;
+  document.getElementById('countLabel').textContent =
+    `${totalDetections.toLocaleString()} record${totalDetections !== 1 ? 's' : ''}`;
+
+  const list = document.getElementById('detectionList');
+
+  if (!append) {
+    list.innerHTML = '';
+  }
+
+  if (!data.detections.length && !append) {
+    list.innerHTML = `<div class="empty-state">
+      <div class="big">All quiet out there</div>
+      No detections match your search.
+    </div>`;
+  } else {
+    data.detections.forEach(d => list.appendChild(buildRow(d)));
+  }
+
+  const loadMoreRow = document.getElementById('loadMoreRow');
+  if (offset + LIMIT < totalDetections) {
+    loadMoreRow.style.display = 'block';
+  } else {
+    loadMoreRow.style.display = 'none';
+  }
+}
+
+function buildRow(d) {
+  const div = document.createElement('div');
+  div.className = 'detection-row';
+  div.dataset.id = d.id;
+
+  const pct = Math.round(d.confidence * 100);
+  const barClass = pct >= 85 ? 'high' : pct >= 70 ? 'med' : 'low';
+
+  const ts = new Date(d.detected_at);
+  const tsStr = ts.toLocaleDateString('en-US', { month:'short', day:'numeric' })
+              + ' · ' + ts.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' });
+
+  div.innerHTML = `
+    <div>
+      <div class="det-name">${d.common_name}</div>
+      <div class="det-sci">${d.scientific_name || ''}</div>
+      <div class="det-meta">${tsStr}${d.duration_sec ? ' · ' + d.duration_sec.toFixed(1) + 's' : ''}</div>
+    </div>
+    <div class="confidence-bar-wrap">
+      <span class="confidence-pct">${pct}%</span>
+      <div class="confidence-bar">
+        <div class="confidence-bar-fill ${barClass}" style="width:${pct}%"></div>
+      </div>
+    </div>
+    <div class="det-actions">
+      <button class="play-btn ${!d.has_audio ? 'no-audio' : ''}" 
+              title="${d.has_audio ? 'Play clip' : 'Audio file missing'}"
+              onclick="playSnippet(${d.id}, '${d.common_name.replace(/'/,"\\'")}', this)"
+              ${!d.has_audio ? 'disabled' : ''}>▶</button>
+      <button class="delete-btn" title="Delete" onclick="deleteDetection(${d.id}, this)">×</button>
+    </div>
+  `;
+  return div;
+}
+
+// ── Playback ──────────────────────────────────────────────────────────────────
+function playSnippet(id, name, btn) {
+  if (currentPlayId === id) {
+    // Toggle pause/play
+    if (audioPlayer.paused) {
+      audioPlayer.play();
+      btn.textContent = '⏸';
+    } else {
+      audioPlayer.pause();
+      btn.textContent = '▶';
+    }
+    return;
+  }
+
+  // Reset old button
+  if (currentPlayId) {
+    const oldBtn = document.querySelector(`.detection-row[data-id="${currentPlayId}"] .play-btn`);
+    if (oldBtn) { oldBtn.textContent = '▶'; oldBtn.classList.remove('playing'); }
+  }
+
+  currentPlayId = id;
+  audioPlayer.src = `/api/snippet/${id}`;
+  audioPlayer.play();
+  btn.textContent = '⏸';
+  btn.classList.add('playing');
+  audioStrip.classList.add('visible');
+  audioStripName.textContent = name;
+
+  audioPlayer.onended = () => {
+    btn.textContent = '▶';
+    btn.classList.remove('playing');
+    currentPlayId = null;
+  };
+}
+
+// ── Delete ────────────────────────────────────────────────────────────────────
+async function deleteDetection(id, btn) {
+  if (!confirm('Delete this detection and its audio file?')) return;
+  const res = await fetch(`/api/detection/${id}`, { method: 'DELETE' });
+  if (res.ok) {
+    const row = btn.closest('.detection-row');
+    row.style.opacity = '0';
+    row.style.transition = 'opacity 0.3s';
+    setTimeout(() => { row.remove(); totalDetections--; fetchStats(); }, 300);
+  }
+}
+
+// ── Search ────────────────────────────────────────────────────────────────────
+let searchTimeout;
+document.getElementById('searchInput').addEventListener('input', e => {
+  clearTimeout(searchTimeout);
+  searchTimeout = setTimeout(() => {
+    currentSearch = e.target.value.trim();
+    activeSpeciesFilter = '';
+    resetAndFetch();
+  }, 300);
+});
+
+function resetAndFetch() {
+  offset = 0;
+  fetchDetections(false);
+  fetchStats();
+}
+
+document.getElementById('loadMoreBtn').addEventListener('click', () => {
+  offset += LIMIT;
+  fetchDetections(true);
+});
+
+// ── Auto-refresh ──────────────────────────────────────────────────────────────
+// Refresh stats every 15s, reload top of list every 30s
+setInterval(fetchStats, 15_000);
+setInterval(() => {
+  if (!currentSearch && !activeSpeciesFilter && offset === 0) {
+    fetchDetections(false);
+  }
+}, 30_000);
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+fetchStats();
+fetchDetections(false);
+</script>
+</body>
+</html>
