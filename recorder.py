@@ -97,10 +97,17 @@ def configure_audio_device():
 
     if chosen is None:
         # Use sounddevice default input if possible.
-        if isinstance(sd.default.device, (list, tuple)) and len(sd.default.device) >= 1:
-            chosen = sd.default.device[0]
-        elif isinstance(sd.default.device, int):
-            chosen = sd.default.device
+        # sd.default.device is a sounddevice._InputOutputPair (not a list/tuple),
+        # but supports indexing like one — so index it directly rather than
+        # isinstance-checking for list/tuple, which never matches.
+        default_device = sd.default.device
+        if isinstance(default_device, int):
+            chosen = default_device
+        else:
+            try:
+                chosen = default_device[0]
+            except (TypeError, IndexError):
+                chosen = None
 
     # Final sanity check + log selected device details
     try:
