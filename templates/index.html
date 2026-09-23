@@ -376,6 +376,96 @@
   }
   .load-more-btn:hover { background: var(--paper3); }
 
+  /* ── Detail modal ── */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(26,26,20,0.55);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .modal-overlay.visible { display: flex; }
+
+  .modal-card {
+    background: var(--paper);
+    border: 1.5px solid var(--border2);
+    max-width: 560px;
+    width: 100%;
+    max-height: 88vh;
+    overflow-y: auto;
+    position: relative;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+  }
+
+  .modal-close {
+    position: absolute;
+    top: 12px; right: 12px;
+    width: 30px; height: 30px;
+    border: 1px solid var(--border2);
+    background: var(--paper2);
+    color: var(--ink2);
+    cursor: pointer;
+    font-size: 16px;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 2;
+    transition: background 0.15s, color 0.15s;
+  }
+  .modal-close:hover { background: var(--sage2); color: #fff; border-color: var(--sage2); }
+
+  .modal-photo {
+    width: 100%;
+    height: 260px;
+    object-fit: cover;
+    display: block;
+    background: var(--paper3);
+  }
+  .modal-photo-placeholder {
+    width: 100%; height: 180px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--ink3);
+    font-family: var(--mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    background: var(--paper3);
+  }
+
+  .modal-body { padding: 22px 26px 26px; }
+  .modal-name { font-family: var(--display); font-size: 26px; font-weight: 600; color: var(--ink); padding-right: 30px; }
+  .modal-sci  { font-size: 14px; font-style: italic; color: var(--ink3); margin-top: 2px; }
+
+  .modal-meta-row {
+    display: flex; gap: 22px; flex-wrap: wrap;
+    margin: 16px 0;
+    padding: 12px 0;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+  .modal-meta-row > div { display: flex; flex-direction: column; gap: 2px; }
+  .modal-meta-row span {
+    font-family: var(--mono); font-size: 9px; color: var(--ink3);
+    text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  .modal-meta-row strong {
+    font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--ink2);
+  }
+
+  .modal-audio { width: 100%; margin: 4px 0 16px; accent-color: var(--sage2); }
+
+  .modal-extract { font-size: 14px; line-height: 1.7; color: var(--ink2); }
+  .modal-extract.loading { font-style: italic; color: var(--ink3); }
+
+  .modal-wiki-link {
+    display: inline-block; margin-top: 16px;
+    font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--sage2); text-decoration: none; border-bottom: 1px solid var(--sage2);
+  }
+
+  .detection-row { cursor: pointer; }
+
   /* ── Responsive ── */
   @media (max-width: 700px) {
     .main-grid { grid-template-columns: 1fr; }
@@ -453,6 +543,22 @@
       </div>
     </div>
 
+  </div>
+
+  <!-- Detail modal -->
+  <div class="modal-overlay" id="modalOverlay">
+    <div class="modal-card">
+      <button class="modal-close" id="modalCloseBtn" title="Close">×</button>
+      <div id="modalPhotoWrap"></div>
+      <div class="modal-body">
+        <div class="modal-name" id="modalName"></div>
+        <div class="modal-sci" id="modalSci"></div>
+        <div class="modal-meta-row" id="modalMeta"></div>
+        <audio class="modal-audio" id="modalAudio" controls></audio>
+        <div class="modal-extract loading" id="modalExtract">Loading species info…</div>
+        <a class="modal-wiki-link" id="modalWikiLink" href="#" target="_blank" rel="noopener" style="display:none">Read more on Wikipedia ↗</a>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -584,7 +690,131 @@ function buildRow(d) {
       <button class="delete-btn" title="Delete" onclick="deleteDetection(${d.id}, this)">×</button>
     </div>
   `;
+  div.addEventListener('click', e => {
+    if (e.target.closest('.play-btn') || e.target.closest('.delete-btn')) return;
+    openDetailModal(d);
+  });
   return div;
+}
+
+// ── Detail modal ──────────────────────────────────────────────────────────────
+const speciesInfoCache = {};
+const modalOverlay = document.getElementById('modalOverlay');
+const modalAudio   = document.getElementById('modalAudio');
+
+function openDetailModal(d) {
+  modalOverlay.classList.add('visible');
+
+  document.getElementById('modalName').textContent = d.common_name;
+  document.getElementById('modalSci').textContent = d.scientific_name || '';
+
+  const pct = Math.round(d.confidence * 100);
+  const ts = new Date(d.detected_at);
+  const tsStr = ts.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' })
+              + ' · ' + ts.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' });
+
+  const metaEl = document.getElementById('modalMeta');
+  metaEl.innerHTML = '';
+  const metaItems = [['Detected', tsStr], ['Confidence', pct + '%']];
+  if (d.duration_sec) metaItems.push(['Clip length', d.duration_sec.toFixed(1) + 's']);
+  if (d.latitude != null && d.longitude != null) {
+    metaItems.push(['Location', d.latitude.toFixed(3) + ', ' + d.longitude.toFixed(3)]);
+  }
+  metaItems.forEach(([label, value]) => {
+    const item = document.createElement('div');
+    const spanEl = document.createElement('span');
+    spanEl.textContent = label;
+    const strongEl = document.createElement('strong');
+    strongEl.textContent = value;
+    item.appendChild(spanEl);
+    item.appendChild(strongEl);
+    metaEl.appendChild(item);
+  });
+
+  if (d.has_audio) {
+    modalAudio.style.display = '';
+    modalAudio.src = `/api/snippet/${d.id}`;
+  } else {
+    modalAudio.style.display = 'none';
+    modalAudio.removeAttribute('src');
+  }
+
+  document.getElementById('modalPhotoWrap').innerHTML =
+    '<div class="modal-photo-placeholder">Loading photo…</div>';
+
+  const extractEl = document.getElementById('modalExtract');
+  extractEl.textContent = 'Loading species info…';
+  extractEl.classList.add('loading');
+  document.getElementById('modalWikiLink').style.display = 'none';
+
+  loadSpeciesInfo(d.common_name, d.scientific_name);
+}
+
+function closeModal() {
+  modalOverlay.classList.remove('visible');
+  modalAudio.pause();
+}
+
+document.getElementById('modalCloseBtn').addEventListener('click', closeModal);
+modalOverlay.addEventListener('click', e => {
+  if (e.target === modalOverlay) closeModal();
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && modalOverlay.classList.contains('visible')) closeModal();
+});
+
+async function loadSpeciesInfo(commonName, sciName) {
+  if (speciesInfoCache[commonName]) {
+    renderSpeciesInfo(speciesInfoCache[commonName]);
+    return;
+  }
+
+  try {
+    const params = new URLSearchParams();
+    if (sciName) params.set('sci', sciName);
+    const res = await fetch(`/api/species/${encodeURIComponent(commonName)}?${params}`);
+    const data = await res.json();
+    speciesInfoCache[commonName] = data;
+    // Only render if the modal is still showing this species (guards against fast re-clicks)
+    if (document.getElementById('modalName').textContent === commonName) {
+      renderSpeciesInfo(data);
+    }
+  } catch {
+    document.getElementById('modalPhotoWrap').innerHTML =
+      '<div class="modal-photo-placeholder">No photo available</div>';
+    const extractEl = document.getElementById('modalExtract');
+    extractEl.classList.remove('loading');
+    extractEl.textContent = 'Could not load species info — check your connection.';
+  }
+}
+
+function renderSpeciesInfo(data) {
+  const photoWrap = document.getElementById('modalPhotoWrap');
+  photoWrap.innerHTML = '';
+  if (data.found && data.thumbnail) {
+    const img = document.createElement('img');
+    img.className = 'modal-photo';
+    img.alt = data.title || '';
+    img.onerror = () => {
+      photoWrap.innerHTML = '<div class="modal-photo-placeholder">No photo available</div>';
+    };
+    img.src = data.thumbnail;
+    photoWrap.appendChild(img);
+  } else {
+    photoWrap.innerHTML = '<div class="modal-photo-placeholder">No photo available</div>';
+  }
+
+  const extractEl = document.getElementById('modalExtract');
+  extractEl.classList.remove('loading');
+  extractEl.textContent = (data.found && data.extract) ? data.extract : 'No additional information found.';
+
+  const wikiLink = document.getElementById('modalWikiLink');
+  if (data.found && data.wiki_url) {
+    wikiLink.href = data.wiki_url;
+    wikiLink.style.display = 'inline-block';
+  } else {
+    wikiLink.style.display = 'none';
+  }
 }
 
 // ── Playback ──────────────────────────────────────────────────────────────────

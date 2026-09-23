@@ -10,8 +10,12 @@ Serves:
 """
 
 import os
+import json
 import sqlite3
 import mimetypes
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -23,6 +27,40 @@ SNIPPETS_DIR = Path("snippets")
 
 app = Flask(__name__, template_folder="templates")
 CORS(app)
+
+# ── Species info (Wikipedia summary — no API key required) ────────────────────
+
+_species_info_cache: dict[str, dict] = {}
+
+
+def _wikipedia_summary(title: str) -> dict | None:
+    """Fetch a page summary + thumbnail from Wikipedia's REST API, or None if unavailable."""
+    url = "https://en.wikipedia.org/api/rest_v1/page/summary/" + urllib.parse.quote(
+        title.strip().replace(" ", "_")
+    )
+    req = urllib.request.Request(
+        url, headers={"User-Agent": "BirdWatcher/0.1 (local birdwatching dashboard)"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return None
+
+    if data.get("type") == "disambiguation":
+        return None
+
+    thumbnail = (data.get("thumbnail") or {}).get("source")
+    original  = (data.get("originalimage") or {}).get("source")
+    page_url  = ((data.get("content_urls") or {}).get("desktop") or {}).get("page")
+
+    return {
+        "found": True,
+        "title": data.get("title"),
+        "extract": data.get("extract"),
+        "thumbnail": thumbnail or original,
+        "wiki_url": page_url,
+    }
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
 
@@ -161,6 +199,25 @@ def api_snippet(detection_id):
         abort(404)
 
     return send_file(str(path.resolve()), mimetype="audio/wav", as_attachment=False)
+
+
+@app.route("/api/species/<name>")
+def api_species_info(name):
+    sci_name = request.args.get("sci", "").strip()
+    cache_key = name.lower()
+
+    if cache_key in _species_info_cache:
+        return jsonify(_species_info_cache[cache_key])
+
+    result = _wikipedia_summary(name)
+    if result is None and sci_name:
+        result = _wikipedia_summary(sci_name)
+
+    if result is None:
+        result = {"found": False, "title": name, "extract": None, "thumbnail": None, "wiki_url": None}
+
+    _species_info_cache[cache_key] = result
+    return jsonify(result)
 
 
 @app.route("/api/detection/<int:detection_id>", methods=["DELETE"])
