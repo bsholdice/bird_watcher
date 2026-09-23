@@ -334,6 +334,11 @@ def analysis_worker():
                 save_snippet(audio, detections)
             else:
                 log.info("No birds detected in clip.")
+        except Exception:
+            # Must not escape — an uncaught exception here would silently kill
+            # this daemon thread, after which nothing drains analysis_queue and
+            # every subsequent clip is dropped with "queue full".
+            log.exception("Failed to process clip: %s", tmp_path.name)
         finally:
             # Clean up the temp file
             try:
