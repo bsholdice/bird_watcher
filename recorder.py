@@ -143,9 +143,66 @@ def init_db():
             duration_sec  REAL
         )
     """)
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    """)
+    # Seed from env-configured defaults only if not already set, so a value
+    # adjusted live (or by a previous run) survives across restarts.
+    con.execute(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('silence_threshold', ?)",
+        (str(SILENCE_THRESHOLD),),
+    )
+    con.execute(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('min_confidence', ?)",
+        (str(MIN_CONFIDENCE),),
+    )
     con.commit()
     con.close()
     log.info("Database ready: %s", DB_PATH)
+
+
+# ── Live settings ─────────────────────────────────────────────────────────────
+# SILENCE_THRESHOLD / MIN_CONFIDENCE are polled from the DB periodically so
+# they can be adjusted from the dashboard without restarting the recorder.
+
+SETTINGS_POLL_SECONDS = 3
+
+
+def refresh_settings():
+    global SILENCE_THRESHOLD, MIN_CONFIDENCE
+    con = sqlite3.connect(DB_PATH)
+    rows = dict(con.execute("SELECT key, value FROM settings").fetchall())
+    con.close()
+
+    if "silence_threshold" in rows:
+        try:
+            new_val = float(rows["silence_threshold"])
+        except ValueError:
+            new_val = None
+        if new_val is not None and new_val != SILENCE_THRESHOLD:
+            log.info("Silence threshold updated: %.4f → %.4f", SILENCE_THRESHOLD, new_val)
+            SILENCE_THRESHOLD = new_val
+
+    if "min_confidence" in rows:
+        try:
+            new_val = float(rows["min_confidence"])
+        except ValueError:
+            new_val = None
+        if new_val is not None and new_val != MIN_CONFIDENCE:
+            log.info("Min confidence updated: %.2f → %.2f", MIN_CONFIDENCE, new_val)
+            MIN_CONFIDENCE = new_val
+
+
+def settings_watcher():
+    while True:
+        time.sleep(SETTINGS_POLL_SECONDS)
+        try:
+            refresh_settings()
+        except Exception as exc:
+            log.warning("Settings refresh failed: %s", exc)
 
 
 def save_detection(common_name, scientific_name, confidence, file_path, duration):
@@ -381,6 +438,10 @@ def main():
     # Start background analysis thread
     worker = threading.Thread(target=analysis_worker, daemon=True)
     worker.start()
+
+    # Start background settings-poll thread (picks up live dashboard edits)
+    settings_thread = threading.Thread(target=settings_watcher, daemon=True)
+    settings_thread.start()
 
     try:
         record_loop()

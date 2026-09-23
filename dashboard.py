@@ -25,6 +25,10 @@ from flask_cors import CORS
 DB_PATH      = Path("birdwatcher.db")
 SNIPPETS_DIR = Path("snippets")
 
+# Defaults mirror recorder.py's env-configured startup values.
+DEFAULT_SILENCE_THRESHOLD = float(os.environ.get("SILENCE_THRESHOLD", "0.008"))
+DEFAULT_MIN_CONFIDENCE    = float(os.environ.get("MIN_CONFIDENCE", "0.70"))
+
 app = Flask(__name__, template_folder="templates")
 CORS(app)
 
@@ -129,6 +133,27 @@ def ensure_db():
         """)
         con.commit()
         con.close()
+
+
+def ensure_settings_table():
+    """Create the settings table if missing and seed it with env-configured defaults."""
+    con = get_db()
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    """)
+    con.execute(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('silence_threshold', ?)",
+        (str(DEFAULT_SILENCE_THRESHOLD),),
+    )
+    con.execute(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('min_confidence', ?)",
+        (str(DEFAULT_MIN_CONFIDENCE),),
+    )
+    con.commit()
+    con.close()
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
@@ -272,6 +297,57 @@ def api_geocode():
     return jsonify(result)
 
 
+@app.route("/api/settings", methods=["GET"])
+def api_get_settings():
+    con = get_db()
+    rows = dict(con.execute("SELECT key, value FROM settings").fetchall())
+    con.close()
+
+    return jsonify({
+        "silence_threshold": float(rows.get("silence_threshold", DEFAULT_SILENCE_THRESHOLD)),
+        "min_confidence": float(rows.get("min_confidence", DEFAULT_MIN_CONFIDENCE)),
+    })
+
+
+@app.route("/api/settings", methods=["POST"])
+def api_update_settings():
+    data = request.get_json(silent=True) or {}
+    updates = {}
+
+    if "silence_threshold" in data:
+        try:
+            val = float(data["silence_threshold"])
+        except (TypeError, ValueError):
+            return jsonify({"error": "silence_threshold must be a number"}), 400
+        if not (0 <= val <= 1):
+            return jsonify({"error": "silence_threshold must be between 0 and 1"}), 400
+        updates["silence_threshold"] = val
+
+    if "min_confidence" in data:
+        try:
+            val = float(data["min_confidence"])
+        except (TypeError, ValueError):
+            return jsonify({"error": "min_confidence must be a number"}), 400
+        if not (0 <= val <= 1):
+            return jsonify({"error": "min_confidence must be between 0 and 1"}), 400
+        updates["min_confidence"] = val
+
+    if not updates:
+        return jsonify({"error": "no valid settings provided"}), 400
+
+    con = get_db()
+    for key, val in updates.items():
+        con.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, str(val)),
+        )
+    con.commit()
+    con.close()
+
+    return jsonify({"updated": updates})
+
+
 @app.route("/api/detection/<int:detection_id>", methods=["DELETE"])
 def api_delete_detection(detection_id):
     con = get_db()
@@ -302,5 +378,6 @@ def api_delete_detection(detection_id):
 
 if __name__ == "__main__":
     ensure_db()
+    ensure_settings_table()
     print("🐦  BirdWatcher Dashboard → http://localhost:5000")
     app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
