@@ -458,8 +458,10 @@
   .modal-extract { font-size: 14px; line-height: 1.7; color: var(--ink2); }
   .modal-extract.loading { font-style: italic; color: var(--ink3); }
 
+  .modal-link-row { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 16px; }
+
   .modal-wiki-link {
-    display: inline-block; margin-top: 16px;
+    display: inline-block;
     font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
     color: var(--sage2); text-decoration: none; border-bottom: 1px solid var(--sage2);
   }
@@ -556,7 +558,10 @@
         <div class="modal-meta-row" id="modalMeta"></div>
         <audio class="modal-audio" id="modalAudio" controls></audio>
         <div class="modal-extract loading" id="modalExtract">Loading species info…</div>
-        <a class="modal-wiki-link" id="modalWikiLink" href="#" target="_blank" rel="noopener" style="display:none">Read more on Wikipedia ↗</a>
+        <div class="modal-link-row">
+          <a class="modal-wiki-link" id="modalWikiLink" href="#" target="_blank" rel="noopener" style="display:none">Read more on Wikipedia ↗</a>
+          <a class="modal-wiki-link" id="modalMapLink" href="#" target="_blank" rel="noopener" style="display:none">View on map ↗</a>
+        </div>
       </div>
     </div>
   </div>
@@ -699,8 +704,22 @@ function buildRow(d) {
 
 // ── Detail modal ──────────────────────────────────────────────────────────────
 const speciesInfoCache = {};
+const geocodeCache = {};
 const modalOverlay = document.getElementById('modalOverlay');
 const modalAudio   = document.getElementById('modalAudio');
+
+function addMetaItem(label, value) {
+  const metaEl = document.getElementById('modalMeta');
+  const item = document.createElement('div');
+  const spanEl = document.createElement('span');
+  spanEl.textContent = label;
+  const strongEl = document.createElement('strong');
+  strongEl.textContent = value;
+  item.appendChild(spanEl);
+  item.appendChild(strongEl);
+  metaEl.appendChild(item);
+  return strongEl;
+}
 
 function openDetailModal(d) {
   modalOverlay.classList.add('visible');
@@ -713,23 +732,20 @@ function openDetailModal(d) {
   const tsStr = ts.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' })
               + ' · ' + ts.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' });
 
-  const metaEl = document.getElementById('modalMeta');
-  metaEl.innerHTML = '';
-  const metaItems = [['Detected', tsStr], ['Confidence', pct + '%']];
-  if (d.duration_sec) metaItems.push(['Clip length', d.duration_sec.toFixed(1) + 's']);
+  document.getElementById('modalMeta').innerHTML = '';
+  addMetaItem('Detected', tsStr);
+  addMetaItem('Confidence', pct + '%');
+  if (d.duration_sec) addMetaItem('Clip length', d.duration_sec.toFixed(1) + 's');
+
+  const modalMapLink = document.getElementById('modalMapLink');
   if (d.latitude != null && d.longitude != null) {
-    metaItems.push(['Location', d.latitude.toFixed(3) + ', ' + d.longitude.toFixed(3)]);
+    const locationEl = addMetaItem('Location', d.latitude.toFixed(3) + ', ' + d.longitude.toFixed(3));
+    modalMapLink.href = `https://www.google.com/maps?q=${d.latitude},${d.longitude}`;
+    modalMapLink.style.display = 'inline-block';
+    loadLocationLabel(d.latitude, d.longitude, locationEl);
+  } else {
+    modalMapLink.style.display = 'none';
   }
-  metaItems.forEach(([label, value]) => {
-    const item = document.createElement('div');
-    const spanEl = document.createElement('span');
-    spanEl.textContent = label;
-    const strongEl = document.createElement('strong');
-    strongEl.textContent = value;
-    item.appendChild(spanEl);
-    item.appendChild(strongEl);
-    metaEl.appendChild(item);
-  });
 
   if (d.has_audio) {
     modalAudio.style.display = '';
@@ -762,6 +778,27 @@ modalOverlay.addEventListener('click', e => {
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && modalOverlay.classList.contains('visible')) closeModal();
 });
+
+async function loadLocationLabel(lat, lon, strongEl) {
+  const key = lat.toFixed(3) + ',' + lon.toFixed(3);
+
+  if (geocodeCache[key]) {
+    if (geocodeCache[key].found) strongEl.textContent = geocodeCache[key].label;
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/geocode?lat=${lat}&lon=${lon}`);
+    const data = await res.json();
+    geocodeCache[key] = data;
+    if (data.found && data.label) {
+      strongEl.title = lat.toFixed(3) + ', ' + lon.toFixed(3);
+      strongEl.textContent = data.label;
+    }
+  } catch {
+    // Leave the raw coordinates in place as a fallback.
+  }
+}
 
 async function loadSpeciesInfo(commonName, sciName) {
   if (speciesInfoCache[commonName]) {

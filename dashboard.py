@@ -62,6 +62,46 @@ def _wikipedia_summary(title: str) -> dict | None:
         "wiki_url": page_url,
     }
 
+# ── Reverse geocoding (OpenStreetMap Nominatim — no API key required) ─────────
+
+_geocode_cache: dict[tuple[float, float], dict] = {}
+
+
+def _reverse_geocode(lat: float, lon: float) -> dict | None:
+    """Look up a human-readable place name for coordinates, or None if unavailable."""
+    key = (round(lat, 3), round(lon, 3))
+    if key in _geocode_cache:
+        return _geocode_cache[key]
+
+    url = (
+        "https://nominatim.openstreetmap.org/reverse"
+        f"?format=jsonv2&lat={key[0]}&lon={key[1]}&zoom=10&addressdetails=1"
+    )
+    req = urllib.request.Request(
+        url, headers={"User-Agent": "BirdWatcher/0.1 (local birdwatching dashboard)"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return None
+
+    address = data.get("address") or {}
+    place = (
+        address.get("city")
+        or address.get("town")
+        or address.get("village")
+        or address.get("hamlet")
+        or address.get("suburb")
+        or address.get("county")
+    )
+    label_parts = [p for p in (place, address.get("state")) if p]
+    label = ", ".join(label_parts) if label_parts else data.get("display_name")
+
+    result = {"found": bool(label), "label": label}
+    _geocode_cache[key] = result
+    return result
+
 # ── DB helpers ────────────────────────────────────────────────────────────────
 
 def get_db():
@@ -217,6 +257,18 @@ def api_species_info(name):
         result = {"found": False, "title": name, "extract": None, "thumbnail": None, "wiki_url": None}
 
     _species_info_cache[cache_key] = result
+    return jsonify(result)
+
+
+@app.route("/api/geocode")
+def api_geocode():
+    try:
+        lat = float(request.args.get("lat", ""))
+        lon = float(request.args.get("lon", ""))
+    except (TypeError, ValueError):
+        return jsonify({"found": False, "label": None}), 400
+
+    result = _reverse_geocode(lat, lon) or {"found": False, "label": None}
     return jsonify(result)
 
 
