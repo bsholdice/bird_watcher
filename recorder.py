@@ -11,6 +11,7 @@ Runs until Ctrl+C.
 """
 
 import os
+import json
 import time
 import queue
 import struct
@@ -19,6 +20,8 @@ import sqlite3
 import hashlib
 import threading
 import collections
+import urllib.error
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 
@@ -39,9 +42,13 @@ MIN_CONFIDENCE    = float(os.environ.get("MIN_CONFIDENCE", "0.70"))
 SNIPPETS_DIR      = Path("snippets")
 DB_PATH           = Path("birdwatcher.db")
 
-# Your location — used by BirdNET species range model
-LATITUDE          = 47.6101  # Sammamish, WA
-LONGITUDE         = -122.0326
+# Location — used by BirdNET's species range model. Resolved dynamically at
+# startup (IP-based geolocation, or a manual override from the dashboard) via
+# refresh_settings(); these are just the last-resort fallback if that fails.
+FALLBACK_LATITUDE  = 47.6101  # Sammamish, WA
+FALLBACK_LONGITUDE = -122.0326
+LATITUDE           = FALLBACK_LATITUDE
+LONGITUDE          = FALLBACK_LONGITUDE
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -159,20 +166,59 @@ def init_db():
         "INSERT OR IGNORE INTO settings (key, value) VALUES ('min_confidence', ?)",
         (str(MIN_CONFIDENCE),),
     )
+    # Location defaults to automatic (IP-based) detection; latitude/longitude
+    # are deliberately left unset here so refresh_settings() resolves them.
+    con.execute(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('location_mode', 'auto')"
+    )
     con.commit()
     con.close()
     log.info("Database ready: %s", DB_PATH)
 
 
 # ── Live settings ─────────────────────────────────────────────────────────────
-# SILENCE_THRESHOLD / MIN_CONFIDENCE are polled from the DB periodically so
-# they can be adjusted from the dashboard without restarting the recorder.
+# SILENCE_THRESHOLD / MIN_CONFIDENCE / LATITUDE / LONGITUDE are polled from the
+# DB periodically so they can be adjusted from the dashboard without
+# restarting the recorder.
 
 SETTINGS_POLL_SECONDS = 3
 
 
+def _ip_geolocate() -> tuple[float, float] | None:
+    """Best-effort location from the public IP address (city-level accuracy)."""
+    req = urllib.request.Request(
+        "https://ipapi.co/json/",
+        headers={"User-Agent": "BirdWatcher/0.1 (local birdwatching recorder)"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        lat, lon = data.get("latitude"), data.get("longitude")
+        if lat is None or lon is None:
+            return None
+        return float(lat), float(lon)
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError, KeyError):
+        return None
+
+
+def _save_location_setting(lat: float, lon: float) -> None:
+    con = sqlite3.connect(DB_PATH)
+    con.execute(
+        "INSERT INTO settings (key, value) VALUES ('latitude', ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (str(lat),),
+    )
+    con.execute(
+        "INSERT INTO settings (key, value) VALUES ('longitude', ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (str(lon),),
+    )
+    con.commit()
+    con.close()
+
+
 def refresh_settings():
-    global SILENCE_THRESHOLD, MIN_CONFIDENCE
+    global SILENCE_THRESHOLD, MIN_CONFIDENCE, LATITUDE, LONGITUDE
     con = sqlite3.connect(DB_PATH)
     rows = dict(con.execute("SELECT key, value FROM settings").fetchall())
     con.close()
@@ -194,6 +240,33 @@ def refresh_settings():
         if new_val is not None and new_val != MIN_CONFIDENCE:
             log.info("Min confidence updated: %.2f → %.2f", MIN_CONFIDENCE, new_val)
             MIN_CONFIDENCE = new_val
+
+    location_mode = rows.get("location_mode", "auto")
+
+    if location_mode == "manual":
+        try:
+            new_lat = float(rows["latitude"])
+            new_lon = float(rows["longitude"])
+        except (KeyError, ValueError):
+            new_lat = new_lon = None
+        if new_lat is not None and (new_lat, new_lon) != (LATITUDE, LONGITUDE):
+            log.info("Location updated (manual): %.4f, %.4f → %.4f, %.4f",
+                      LATITUDE, LONGITUDE, new_lat, new_lon)
+            LATITUDE, LONGITUDE = new_lat, new_lon
+
+    elif not rows.get("latitude") or not rows.get("longitude"):
+        # Automatic mode with no coordinates resolved yet (first run, or the
+        # dashboard cleared them to request a fresh detection) — geolocate.
+        log.info("Detecting location from IP address…")
+        coords = _ip_geolocate()
+        if coords:
+            LATITUDE, LONGITUDE = coords
+            log.info("Detected location: %.4f, %.4f", LATITUDE, LONGITUDE)
+        else:
+            LATITUDE, LONGITUDE = FALLBACK_LATITUDE, FALLBACK_LONGITUDE
+            log.warning("Could not auto-detect location; using fallback %.4f, %.4f",
+                        LATITUDE, LONGITUDE)
+        _save_location_setting(LATITUDE, LONGITUDE)
 
 
 def settings_watcher():
@@ -438,6 +511,7 @@ def record_loop():
 
 def main():
     init_db()
+    refresh_settings()  # resolves location (and any prior live-adjusted values) before recording starts
     configure_audio_device()
 
     # Start background analysis thread

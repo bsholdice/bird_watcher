@@ -152,6 +152,11 @@ def ensure_settings_table():
         "INSERT OR IGNORE INTO settings (key, value) VALUES ('min_confidence', ?)",
         (str(DEFAULT_MIN_CONFIDENCE),),
     )
+    # Location defaults to automatic (IP-based) detection; latitude/longitude
+    # are deliberately left unset here — the recorder resolves and writes them.
+    con.execute(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('location_mode', 'auto')"
+    )
     con.commit()
     con.close()
 
@@ -303,9 +308,15 @@ def api_get_settings():
     rows = dict(con.execute("SELECT key, value FROM settings").fetchall())
     con.close()
 
+    latitude  = rows.get("latitude")
+    longitude = rows.get("longitude")
+
     return jsonify({
         "silence_threshold": float(rows.get("silence_threshold", DEFAULT_SILENCE_THRESHOLD)),
         "min_confidence": float(rows.get("min_confidence", DEFAULT_MIN_CONFIDENCE)),
+        "location_mode": rows.get("location_mode", "auto"),
+        "latitude": float(latitude) if latitude else None,
+        "longitude": float(longitude) if longitude else None,
     })
 
 
@@ -313,6 +324,7 @@ def api_get_settings():
 def api_update_settings():
     data = request.get_json(silent=True) or {}
     updates = {}
+    clear_location = False
 
     if "silence_threshold" in data:
         try:
@@ -332,6 +344,29 @@ def api_update_settings():
             return jsonify({"error": "min_confidence must be between 0 and 1"}), 400
         updates["min_confidence"] = val
 
+    if "location_mode" in data:
+        mode = data["location_mode"]
+        if mode not in ("auto", "manual"):
+            return jsonify({"error": "location_mode must be 'auto' or 'manual'"}), 400
+        updates["location_mode"] = mode
+
+        if mode == "manual":
+            try:
+                lat = float(data["latitude"])
+                lon = float(data["longitude"])
+            except (KeyError, TypeError, ValueError):
+                return jsonify({"error": "manual mode requires numeric latitude and longitude"}), 400
+            if not (-90 <= lat <= 90):
+                return jsonify({"error": "latitude must be between -90 and 90"}), 400
+            if not (-180 <= lon <= 180):
+                return jsonify({"error": "longitude must be between -180 and 180"}), 400
+            updates["latitude"] = lat
+            updates["longitude"] = lon
+        else:
+            # Switching to (or re-requesting) automatic mode: clear any stored
+            # coordinates so the recorder re-detects from its IP on next poll.
+            clear_location = True
+
     if not updates:
         return jsonify({"error": "no valid settings provided"}), 400
 
@@ -342,10 +377,12 @@ def api_update_settings():
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (key, str(val)),
         )
+    if clear_location:
+        con.execute("DELETE FROM settings WHERE key IN ('latitude', 'longitude')")
     con.commit()
     con.close()
 
-    return jsonify({"updated": updates})
+    return jsonify({"updated": updates, "location_cleared": clear_location})
 
 
 @app.route("/api/detection/<int:detection_id>", methods=["DELETE"])

@@ -488,13 +488,13 @@
     font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
     color: var(--ink3); margin-bottom: 6px;
   }
-  .settings-field input {
+  .settings-field input, .settings-field select {
     width: 100%;
     font-family: var(--mono); font-size: 14px;
     background: var(--paper); border: 1px solid var(--border2); color: var(--ink);
     padding: 8px 10px; outline: none;
   }
-  .settings-field input:focus { border-color: var(--sage); }
+  .settings-field input:focus, .settings-field select:focus { border-color: var(--sage); }
   .settings-hint {
     font-size: 11px; color: var(--ink3); margin-top: 5px; line-height: 1.5;
   }
@@ -625,6 +625,27 @@
           <label for="minConfidenceInput">Minimum confidence (%)</label>
           <input type="number" id="minConfidenceInput" min="0" max="100" step="1">
           <div class="settings-hint">Detections below this confidence are discarded.</div>
+        </div>
+
+        <div class="settings-field">
+          <label for="locationModeSelect">Location</label>
+          <select id="locationModeSelect">
+            <option value="auto">Automatic (based on IP address)</option>
+            <option value="manual">Manual</option>
+          </select>
+        </div>
+
+        <div class="settings-field" id="autoLocationBlock">
+          <div class="settings-hint" id="autoLocationValue">Not yet detected.</div>
+          <button class="load-more-btn" id="detectLocationBtn" style="margin-top:10px;">Detect again</button>
+        </div>
+
+        <div class="settings-field" id="manualLocationBlock" style="display:none;">
+          <label for="latitudeInput">Latitude</label>
+          <input type="number" id="latitudeInput" min="-90" max="90" step="0.0001">
+          <label for="longitudeInput" style="margin-top:10px;">Longitude</label>
+          <input type="number" id="longitudeInput" min="-180" max="180" step="0.0001">
+          <div class="settings-hint">Used for BirdNET's species range filtering and shown on each detection.</div>
         </div>
 
         <div class="settings-actions">
@@ -1005,7 +1026,16 @@ setInterval(() => {
 const settingsOverlay = document.getElementById('settingsOverlay');
 const silenceThresholdInput = document.getElementById('silenceThresholdInput');
 const minConfidenceInput = document.getElementById('minConfidenceInput');
+const locationModeSelect = document.getElementById('locationModeSelect');
+const latitudeInput = document.getElementById('latitudeInput');
+const longitudeInput = document.getElementById('longitudeInput');
+const autoLocationValue = document.getElementById('autoLocationValue');
 const settingsStatus = document.getElementById('settingsStatus');
+
+function updateLocationFieldsVisibility(mode) {
+  document.getElementById('autoLocationBlock').style.display = mode === 'auto' ? '' : 'none';
+  document.getElementById('manualLocationBlock').style.display = mode === 'manual' ? '' : 'none';
+}
 
 async function openSettings() {
   settingsOverlay.classList.add('visible');
@@ -1017,6 +1047,17 @@ async function openSettings() {
     const data = await res.json();
     silenceThresholdInput.value = data.silence_threshold;
     minConfidenceInput.value = Math.round(data.min_confidence * 100);
+
+    locationModeSelect.value = data.location_mode;
+    updateLocationFieldsVisibility(data.location_mode);
+
+    if (data.latitude != null && data.longitude != null) {
+      autoLocationValue.textContent = `Currently: ${data.latitude.toFixed(4)}, ${data.longitude.toFixed(4)}`;
+      latitudeInput.value = data.latitude;
+      longitudeInput.value = data.longitude;
+    } else {
+      autoLocationValue.textContent = 'Detecting… the recorder resolves this automatically within a few seconds.';
+    }
   } catch {
     settingsStatus.textContent = 'Could not load current settings.';
     settingsStatus.classList.add('error');
@@ -1036,9 +1077,34 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && settingsOverlay.classList.contains('visible')) closeSettings();
 });
 
+locationModeSelect.addEventListener('change', e => {
+  updateLocationFieldsVisibility(e.target.value);
+});
+
+document.getElementById('detectLocationBtn').addEventListener('click', async () => {
+  settingsStatus.classList.remove('error');
+  settingsStatus.textContent = 'Requesting re-detection…';
+  try {
+    const res = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ location_mode: 'auto' }),
+    });
+    if (!res.ok) throw new Error();
+    locationModeSelect.value = 'auto';
+    updateLocationFieldsVisibility('auto');
+    autoLocationValue.textContent = 'Detecting… the recorder resolves this automatically within a few seconds.';
+    settingsStatus.textContent = 'Requested — reopen this panel shortly to see the new location.';
+  } catch {
+    settingsStatus.textContent = 'Failed to request re-detection.';
+    settingsStatus.classList.add('error');
+  }
+});
+
 document.getElementById('settingsSaveBtn').addEventListener('click', async () => {
   const silenceThreshold = parseFloat(silenceThresholdInput.value);
   const minConfidencePct = parseFloat(minConfidenceInput.value);
+  const locationMode = locationModeSelect.value;
 
   settingsStatus.classList.remove('error');
 
@@ -1053,20 +1119,43 @@ document.getElementById('settingsSaveBtn').addEventListener('click', async () =>
     return;
   }
 
+  const payload = {
+    silence_threshold: silenceThreshold,
+    min_confidence: minConfidencePct / 100,
+    location_mode: locationMode,
+  };
+
+  if (locationMode === 'manual') {
+    const lat = parseFloat(latitudeInput.value);
+    const lon = parseFloat(longitudeInput.value);
+    if (Number.isNaN(lat) || lat < -90 || lat > 90) {
+      settingsStatus.textContent = 'Latitude must be between -90 and 90.';
+      settingsStatus.classList.add('error');
+      return;
+    }
+    if (Number.isNaN(lon) || lon < -180 || lon > 180) {
+      settingsStatus.textContent = 'Longitude must be between -180 and 180.';
+      settingsStatus.classList.add('error');
+      return;
+    }
+    payload.latitude = lat;
+    payload.longitude = lon;
+  }
+
   settingsStatus.textContent = 'Saving…';
   try {
     const res = await fetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        silence_threshold: silenceThreshold,
-        min_confidence: minConfidencePct / 100,
-      }),
+      body: JSON.stringify(payload),
     });
-    if (!res.ok) throw new Error();
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Save failed');
+    }
     settingsStatus.textContent = 'Saved — applied within a few seconds.';
-  } catch {
-    settingsStatus.textContent = 'Save failed.';
+  } catch (e) {
+    settingsStatus.textContent = e.message || 'Save failed.';
     settingsStatus.classList.add('error');
   }
 });
