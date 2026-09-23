@@ -468,6 +468,46 @@
 
   .detection-row { cursor: pointer; }
 
+  /* ── Settings ── */
+  .settings-btn {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    border: 1px solid var(--border2);
+    background: var(--paper2);
+    color: var(--ink2);
+    cursor: pointer;
+    font-size: 14px;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.15s, color 0.15s;
+  }
+  .settings-btn:hover { background: var(--sage2); color: #fff; border-color: var(--sage2); }
+
+  .settings-field { margin-top: 18px; }
+  .settings-field label {
+    display: block;
+    font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--ink3); margin-bottom: 6px;
+  }
+  .settings-field input {
+    width: 100%;
+    font-family: var(--mono); font-size: 14px;
+    background: var(--paper); border: 1px solid var(--border2); color: var(--ink);
+    padding: 8px 10px; outline: none;
+  }
+  .settings-field input:focus { border-color: var(--sage); }
+  .settings-hint {
+    font-size: 11px; color: var(--ink3); margin-top: 5px; line-height: 1.5;
+  }
+
+  .settings-actions {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: 22px;
+  }
+  .settings-status {
+    font-family: var(--mono); font-size: 11px; color: var(--sage2);
+  }
+  .settings-status.error { color: var(--rust); }
+
   /* ── Responsive ── */
   @media (max-width: 700px) {
     .main-grid { grid-template-columns: 1fr; }
@@ -484,6 +524,7 @@
       <div class="subtitle">Local acoustic monitor · BirdNET-Analyzer</div>
     </div>
     <div class="header-right">
+      <button class="settings-btn" id="settingsBtn" title="Recorder settings">⚙</button>
       <div class="status-dot" id="statusDot"></div>
       <div class="status-text" id="statusText">Connecting…</div>
     </div>
@@ -561,6 +602,34 @@
         <div class="modal-link-row">
           <a class="modal-wiki-link" id="modalWikiLink" href="#" target="_blank" rel="noopener" style="display:none">Read more on Wikipedia ↗</a>
           <a class="modal-wiki-link" id="modalMapLink" href="#" target="_blank" rel="noopener" style="display:none">View on map ↗</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings modal -->
+  <div class="modal-overlay" id="settingsOverlay">
+    <div class="modal-card" style="max-width:420px;">
+      <button class="modal-close" id="settingsCloseBtn" title="Close">×</button>
+      <div class="modal-body" style="padding-top:26px;">
+        <div class="modal-name" style="font-size:20px;">Recorder settings</div>
+        <div class="modal-sci" style="margin-bottom:0;">Applied live — no restart needed</div>
+
+        <div class="settings-field">
+          <label for="silenceThresholdInput">Silence threshold (RMS)</label>
+          <input type="number" id="silenceThresholdInput" min="0" max="1" step="0.001">
+          <div class="settings-hint">Lower = more sensitive to quiet sounds. Typical range 0.005–0.02.</div>
+        </div>
+
+        <div class="settings-field">
+          <label for="minConfidenceInput">Minimum confidence (%)</label>
+          <input type="number" id="minConfidenceInput" min="0" max="100" step="1">
+          <div class="settings-hint">Detections below this confidence are discarded.</div>
+        </div>
+
+        <div class="settings-actions">
+          <span class="settings-status" id="settingsStatus"></span>
+          <button class="load-more-btn" id="settingsSaveBtn">Save</button>
         </div>
       </div>
     </div>
@@ -931,6 +1000,76 @@ setInterval(() => {
     fetchDetections(false);
   }
 }, 30_000);
+
+// ── Settings modal ──────────────────────────────────────────────────────────────
+const settingsOverlay = document.getElementById('settingsOverlay');
+const silenceThresholdInput = document.getElementById('silenceThresholdInput');
+const minConfidenceInput = document.getElementById('minConfidenceInput');
+const settingsStatus = document.getElementById('settingsStatus');
+
+async function openSettings() {
+  settingsOverlay.classList.add('visible');
+  settingsStatus.textContent = '';
+  settingsStatus.classList.remove('error');
+  try {
+    const res = await fetch('/api/settings');
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+    silenceThresholdInput.value = data.silence_threshold;
+    minConfidenceInput.value = Math.round(data.min_confidence * 100);
+  } catch {
+    settingsStatus.textContent = 'Could not load current settings.';
+    settingsStatus.classList.add('error');
+  }
+}
+
+function closeSettings() {
+  settingsOverlay.classList.remove('visible');
+}
+
+document.getElementById('settingsBtn').addEventListener('click', openSettings);
+document.getElementById('settingsCloseBtn').addEventListener('click', closeSettings);
+settingsOverlay.addEventListener('click', e => {
+  if (e.target === settingsOverlay) closeSettings();
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && settingsOverlay.classList.contains('visible')) closeSettings();
+});
+
+document.getElementById('settingsSaveBtn').addEventListener('click', async () => {
+  const silenceThreshold = parseFloat(silenceThresholdInput.value);
+  const minConfidencePct = parseFloat(minConfidenceInput.value);
+
+  settingsStatus.classList.remove('error');
+
+  if (Number.isNaN(silenceThreshold) || silenceThreshold < 0 || silenceThreshold > 1) {
+    settingsStatus.textContent = 'Silence threshold must be between 0 and 1.';
+    settingsStatus.classList.add('error');
+    return;
+  }
+  if (Number.isNaN(minConfidencePct) || minConfidencePct < 0 || minConfidencePct > 100) {
+    settingsStatus.textContent = 'Confidence must be between 0 and 100.';
+    settingsStatus.classList.add('error');
+    return;
+  }
+
+  settingsStatus.textContent = 'Saving…';
+  try {
+    const res = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        silence_threshold: silenceThreshold,
+        min_confidence: minConfidencePct / 100,
+      }),
+    });
+    if (!res.ok) throw new Error();
+    settingsStatus.textContent = 'Saved — applied within a few seconds.';
+  } catch {
+    settingsStatus.textContent = 'Save failed.';
+    settingsStatus.classList.add('error');
+  }
+});
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 fetchStats();
